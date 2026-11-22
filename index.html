@@ -82,7 +82,7 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
         <option value="600">Ogni 10 minuti</option>
       </select>
       <button class="btn" id="reload">Aggiorna ora</button>
-      <button class="btn" id="reset" title="Torna all'elenco di webcams.json">Ripristina elenco</button>
+      <button class="btn" id="reset" title="Annulla le modifiche locali e torna a webcams.json">Ripristina elenco</button>
       <button class="btn primary" id="add">Aggiungi webcam</button>
     </div>
     <div class="grid" id="grid"></div>
@@ -122,21 +122,45 @@ const AREAS = {
 };
 
 const $ = s => document.querySelector(s);
-const KEY = "webcamList";
-let list = [], filter = {region:null, province:null}, timer = null, editing = null;
+let base = [], list = [], filter = {region:null, province:null}, timer = null, editing = null;
+let local = {added:[], edits:{}, deleted:[]};   // le tue modifiche, separate da webcams.json
 
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch(e){} };
+const keyOf = c => c.id || (c.name + "|" + (c.image || c.page || ""));
 const bust = u => u + (u.includes("?") ? "&" : "?") + "_=" + Date.now();
+const read = k => { try { return JSON.parse(localStorage.getItem(k)); } catch(e){ return null; } };
+const save = () => { try { localStorage.setItem("webcamLocal", JSON.stringify(local)); } catch(e){} };
+const clean = c => { const o = {...c}; delete o._src; delete o._key; delete o._ref; return o; };
 
-async function load(forceBase){
-  let stored = null;
-  if (!forceBase){ try { stored = JSON.parse(localStorage.getItem(KEY)); } catch(e){} }
-  if (Array.isArray(stored)) list = stored;
-  else {
-    list = await fetch("webcams.json").then(r => r.json()).catch(() => []);
-    try { localStorage.removeItem(KEY); } catch(e){}
+function rebuild(){
+  list = base.filter(b => !local.deleted.includes(keyOf(b)))
+    .map(b => ({...(local.edits[keyOf(b)] || b), _src:"base", _key:keyOf(b)}))
+    .concat(local.added.map(a => ({...a, _src:"added", _ref:a})));
+}
+
+// Recupera i dati salvati dalle versioni precedenti (le vecchie chiavi non vengono mai cancellate)
+function migrate(){
+  const baseKeys = base.map(keyOf);
+  const old1 = read("mieWebcam");      // prima versione: solo webcam aggiunte
+  const old2 = read("webcamList");     // seconda versione: elenco completo
+  const addIfNew = c => { const k = keyOf(c); if (!baseKeys.includes(k) && !local.added.some(x => keyOf(x)===k)) local.added.push(clean(c)); };
+  if (Array.isArray(old1)) old1.forEach(addIfNew);
+  if (Array.isArray(old2)){
+    old2.forEach(c => {
+      const k = keyOf(c), b = base.find(x => keyOf(x)===k);
+      if (!b) addIfNew(c);
+      else if (JSON.stringify(clean(c)) !== JSON.stringify(b)) local.edits[k] = clean(c);
+    });
+    baseKeys.forEach(k => { if (!old2.some(c => keyOf(c)===k)) local.deleted.push(k); });
   }
-  render();
+  save();
+}
+
+async function load(){
+  base = await fetch("webcams.json").then(r => r.json()).catch(() => []);
+  const saved = read("webcamLocal");
+  if (saved && Array.isArray(saved.added)) local = {added:saved.added, edits:saved.edits||{}, deleted:saved.deleted||[]};
+  else migrate();
+  rebuild(); render();
 }
 
 function renderNav(){
@@ -182,7 +206,12 @@ function card(c){
   if (c.page){ const a = document.createElement("a"); a.href = c.page; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "Pagina originale"; acts.append(a); }
   const ed = document.createElement("button"); ed.className = "ed"; ed.textContent = "Modifica"; ed.onclick = () => openForm(c);
   const del = document.createElement("button"); del.className = "del"; del.textContent = "Elimina";
-  del.onclick = () => { if (confirm("Eliminare «" + c.name + "»?")){ list.splice(list.indexOf(c),1); save(); render(); } };
+  del.onclick = () => {
+    if (!confirm("Eliminare «" + c.name + "»?")) return;
+    if (c._src==="added") local.added.splice(local.added.indexOf(c._ref),1);
+    else { local.deleted.push(c._key); delete local.edits[c._key]; }
+    save(); rebuild(); render();
+  };
   acts.append(ed, del);
   meta.append(acts); el.append(shot, meta);
   return el;
@@ -242,20 +271,25 @@ $("#form").addEventListener("submit", () => {
     region: fr.value, province: fp.value,
     image: $("#f-image").value.trim(), page: $("#f-page").value.trim(), source: $("#f-source").value.trim()
   };
-  if (editing) Object.assign(editing, data); else list.push(data);
-  editing = null; save(); render();
+  if (!editing) local.added.push(data);
+  else if (editing._src==="added") Object.assign(editing._ref, data);
+  else local.edits[editing._key] = data;
+  editing = null; save(); rebuild(); render();
 });
 $("#export").onclick = () => {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(list, null, 2)], {type:"application/json"}));
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(list.map(clean), null, 2)], {type:"application/json"}));
   a.download = "webcams.json"; a.click();
 };
-$("#reset").onclick = () => { if (confirm("Scartare le modifiche fatte in questo browser e ricaricare l'elenco da webcams.json?")) load(true); };
+$("#reset").onclick = () => {
+  if (!confirm("Annullare TUTTE le modifiche fatte in questo browser (webcam aggiunte, modificate o eliminate)? Se vuoi tenerle, esporta prima il JSON.")) return;
+  local = {added:[], edits:{}, deleted:[]}; save(); rebuild(); render();
+};
 
 $("#q").oninput = render;
 $("#refresh").onchange = schedule;
 $("#reload").onclick = refreshImages;
-load(false).then(schedule);
+load().then(schedule);
 </script>
 </body>
 </html>
