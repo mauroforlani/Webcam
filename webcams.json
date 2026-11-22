@@ -55,5 +55,16 @@
     "embed": "https://piandeltermen.panomax.com/",
     "page": "https://piandeltermen.panomax.com/",
     "source": ""
+  },
+  {
+    "name": "Passo del Tonale",
+    "place": "Ponte di Legno",
+    "country": "Italia",
+    "region": "Lombardia",
+    "province": "Brescia",
+    "image": "",
+    "embed": "https://pontedilegnotonale.panomax.com/passodeltonale",
+    "page": "",
+    "source": ""
   }
 ]
