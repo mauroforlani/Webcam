@@ -60,7 +60,11 @@ nav .lv2{padding-left:24px}
 .zone{font-size:1.15rem;font-weight:800;letter-spacing:-.01em;margin:28px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline}
 .zone:first-child{margin-top:0}
 .zone span{font-size:.85rem;font-weight:400;color:var(--muted)}
-.shot:fullscreen{aspect-ratio:auto}
+.shot:fullscreen,.cam.wide .shot:fullscreen{aspect-ratio:auto}
+@media(min-width:960px){
+  .cam.wide{grid-column:span 2}
+  .cam.wide .shot{aspect-ratio:3.27}  /* larghezza doppia, stessa altezza delle schede normali */
+}
 .shot.click{cursor:zoom-in}
 .acts .ed{margin-left:auto}
 .acts .del{margin-left:0}
@@ -216,7 +220,7 @@ function renderNav(){
 }
 
 function card(c){
-  const el = document.createElement("article"); el.className = "cam";
+  const el = document.createElement("article"); el.className = "cam" + (c.embed ? " wide" : "");
   const shot = document.createElement("div"); shot.className = "shot";
   if (c.embed){
     const fr = document.createElement("iframe");
