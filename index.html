@@ -54,6 +54,7 @@ label{display:block;font-size:.85rem;font-weight:600;margin:10px 0 3px}
 dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
 .hint{font-size:.8rem;color:var(--muted);margin:4px 0 0}
+.shot:fullscreen{aspect-ratio:auto}
 .shot.click{cursor:zoom-in}
 .acts .ed{margin-left:auto}
 .acts .del{margin-left:0}
@@ -100,6 +101,8 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
     <label for="f-province">Provincia</label>
     <select id="f-province"></select>
     <label for="f-image">URL immagine (.jpg diretto)</label><input id="f-image" type="url" placeholder="https://…/webcam.jpg">
+    <label for="f-embed">Iframe (opzionale: incolla il codice <code>&lt;iframe…&gt;</code> o solo l'URL)</label><input id="f-embed" placeholder="https://…">
+    <p class="hint">Se compilato, al posto dell'immagine viene mostrato l'iframe.</p>
     <label for="f-page">URL pagina originale</label><input id="f-page" type="url" placeholder="https://…">
     <label for="f-source">Fonte</label><input id="f-source" placeholder="es. Comune, Orobie Meteo">
     <p class="hint">Le modifiche restano nel tuo browser. Per renderle permanenti e visibili a tutti, usa “Esporta JSON” e sostituisci <code>webcams.json</code> nel repository.</p>
@@ -125,7 +128,8 @@ const $ = s => document.querySelector(s);
 let base = [], list = [], filter = {region:null, province:null}, timer = null, editing = null;
 let local = {added:[], edits:{}, deleted:[]};   // le tue modifiche, separate da webcams.json
 
-const keyOf = c => c.id || (c.name + "|" + (c.image || c.page || ""));
+const parseEmbed = v => { const m = v.match(/src\s*=\s*["']([^"']+)["']/i); return (m ? m[1] : v).trim(); };
+const keyOf = c => c.id || (c.name + "|" + (c.image || c.embed || c.page || ""));
 const bust = u => u + (u.includes("?") ? "&" : "?") + "_=" + Date.now();
 const read = k => { try { return JSON.parse(localStorage.getItem(k)); } catch(e){ return null; } };
 const save = () => { try { localStorage.setItem("webcamLocal", JSON.stringify(local)); } catch(e){} };
@@ -182,10 +186,15 @@ function renderNav(){
 function card(c){
   const el = document.createElement("article"); el.className = "cam";
   const shot = document.createElement("div"); shot.className = "shot";
-  if (c.image){
+  if (c.embed){
+    const fr = document.createElement("iframe");
+    fr.src = c.embed; fr.title = c.name; fr.loading = "lazy"; fr.allowFullscreen = true;
+    fr.setAttribute("allow","fullscreen; autoplay");
+    shot.append(fr);
+  } else if (c.image){
     shot.classList.add("click"); shot.tabIndex = 0; shot.setAttribute("role","button");
     shot.setAttribute("aria-label","Apri a tutto schermo: " + c.name);
-    const img = new Image(); img.alt = c.name; img.loading = "lazy"; img.dataset.src = c.image; img.src = bust(c.image);
+    const img = new Image(); img.referrerPolicy = "no-referrer"; img.alt = c.name; img.loading = "lazy"; img.dataset.src = c.image; img.src = bust(c.image);
     img.onerror = () => {
       img.remove(); shot.classList.remove("click"); shot.onclick = null;
       shot.insertAdjacentHTML("beforeend",'<div class="fallback">Immagine non incorporabile.<br>Apri la pagina originale.</div>');
@@ -204,6 +213,11 @@ function card(c){
   if (c.source){ const b = document.createElement("span"); b.className = "badge"; b.textContent = "Fonte: " + c.source; meta.append(b); }
   const acts = document.createElement("div"); acts.className = "acts";
   if (c.page){ const a = document.createElement("a"); a.href = c.page; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "Pagina originale"; acts.append(a); }
+  if (c.embed && shot.requestFullscreen){
+    const fs = document.createElement("button"); fs.textContent = "Schermo intero";
+    fs.onclick = () => shot.requestFullscreen().catch(() => {});
+    acts.append(fs);
+  }
   const ed = document.createElement("button"); ed.className = "ed"; ed.textContent = "Modifica"; ed.onclick = () => openForm(c);
   const del = document.createElement("button"); del.className = "del"; del.textContent = "Elimina";
   del.onclick = () => {
@@ -233,7 +247,7 @@ function refreshImages(){ document.querySelectorAll(".shot img").forEach(i => { 
 function schedule(){ clearInterval(timer); const s = +$("#refresh").value; if (s) timer = setInterval(refreshImages, s*1000); }
 
 // Tutto schermo
-const lb = $("#lb"), lbImg = lb.querySelector("img");
+const lb = $("#lb"), lbImg = lb.querySelector("img"); lbImg.referrerPolicy = "no-referrer";
 function openLightbox(c){
   lbImg.src = bust(c.image); lbImg.alt = c.name;
   lb.querySelector(".cap").textContent = c.name + (c.place ? " – " + c.place : "");
@@ -260,7 +274,7 @@ function openForm(c){
   $("#f-name").value = c?.name || ""; $("#f-place").value = c?.place || "";
   fr.value = c?.region && AREAS[c.region] ? c.region : (filter.region || Object.keys(AREAS)[0]);
   fillProv(c?.province || filter.province);
-  $("#f-image").value = c?.image || ""; $("#f-page").value = c?.page || ""; $("#f-source").value = c?.source || "";
+  $("#f-image").value = c?.image || ""; $("#f-embed").value = c?.embed || ""; $("#f-page").value = c?.page || ""; $("#f-source").value = c?.source || "";
   dlg.showModal();
 }
 $("#add").onclick = () => openForm(null);
@@ -269,7 +283,7 @@ $("#form").addEventListener("submit", () => {
   const data = {
     name: $("#f-name").value.trim(), place: $("#f-place").value.trim(),
     region: fr.value, province: fp.value,
-    image: $("#f-image").value.trim(), page: $("#f-page").value.trim(), source: $("#f-source").value.trim()
+    image: $("#f-image").value.trim(), embed: parseEmbed($("#f-embed").value), page: $("#f-page").value.trim(), source: $("#f-source").value.trim()
   };
   if (!editing) local.added.push(data);
   else if (editing._src==="added") Object.assign(editing._ref, data);
