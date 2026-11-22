@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Webcam Alpi</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏔️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap">
+<style>
+:root{
+  --bg:#eef2f3; --panel:#ffffff; --ink:#15262c; --muted:#5d7078; --line:#d3dde0;
+  --accent:#2c5b4e; --accent-ink:#ffffff; --warn:#a4452c;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1b20; --panel:#16272e; --ink:#e6eef0; --muted:#97aab1; --line:#27404a; --accent:#7fc4ad; --accent-ink:#0f1b20; --warn:#ef9a82; color-scheme:dark;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 "Bricolage Grotesque",system-ui,sans-serif}
+.app{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+aside{padding:28px 20px;border-right:1px solid var(--line);position:sticky;top:0;height:100vh;overflow:auto}
+h1{font-weight:800;font-size:1.9rem;line-height:1;margin:0 0 4px;letter-spacing:-.02em}
+.sub{color:var(--muted);margin:0 0 24px;font-size:.9rem}
+nav h2{font-size:.95rem;font-weight:600;color:var(--muted);margin:18px 0 4px}
+nav button{display:flex;justify-content:space-between;width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit;padding:6px 10px;border-radius:8px;cursor:pointer}
+nav button:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+nav button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink)}
+nav .n{opacity:.7;font-variant-numeric:tabular-nums}
+main{padding:28px;min-width:0}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:22px}
+.bar input[type=search],.bar select{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+.bar input[type=search]{flex:1;min-width:180px}
+.btn{font:inherit;font-weight:600;padding:9px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px}
+.cam{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+.shot{aspect-ratio:16/10;background:var(--line);position:relative}
+.shot img,.shot iframe{width:100%;height:100%;object-fit:cover;border:0;display:block}
+.shot .fallback{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:16px;color:var(--muted);font-size:.9rem}
+.meta{padding:12px 14px;display:flex;flex-direction:column;gap:2px;flex:1}
+.meta h3{margin:0;font-size:1.05rem;font-weight:600}
+.meta p{margin:0;color:var(--muted);font-size:.85rem}
+.acts{display:flex;gap:14px;margin-top:8px;font-size:.85rem}
+.acts a,.acts button{color:var(--accent);background:none;border:0;font:inherit;padding:0;cursor:pointer;text-decoration:underline}
+.acts .del{color:var(--warn);margin-left:auto}
+.badge{font-size:.75rem;color:var(--muted)}
+.empty{padding:48px 0;color:var(--muted)}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);padding:24px;width:min(480px,92vw)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h2{margin:0 0 14px}
+label{display:block;font-size:.85rem;font-weight:600;margin:10px 0 3px}
+dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+.row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.hint{font-size:.8rem;color:var(--muted);margin:4px 0 0}
+@media(max-width:760px){.app{grid-template-columns:1fr}aside{position:static;height:auto;border:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>Webcam Alpi</h1>
+    <p class="sub">Le mie webcam di montagna</p>
+    <nav id="nav" aria-label="Filtra per provincia"></nav>
+  </aside>
+  <main>
+    <div class="bar">
+      <input type="search" id="q" placeholder="Cerca per nome o località" aria-label="Cerca">
+      <select id="refresh" aria-label="Aggiornamento automatico">
+        <option value="0">Aggiornamento manuale</option>
+        <option value="60">Ogni minuto</option>
+        <option value="300" selected>Ogni 5 minuti</option>
+        <option value="600">Ogni 10 minuti</option>
+      </select>
+      <button class="btn" id="reload">Aggiorna ora</button>
+      <button class="btn primary" id="add">Aggiungi webcam</button>
+    </div>
+    <div class="grid" id="grid"></div>
+    <p class="empty" id="empty" hidden>Nessuna webcam in questa selezione. Usa “Aggiungi webcam” per inserirne una.</p>
+  </main>
+</div>
+
+<dialog id="dlg">
+  <form method="dialog" id="form">
+    <h2>Aggiungi webcam</h2>
+    <label for="f-name">Nome</label><input id="f-name" required>
+    <label for="f-place">Località</label><input id="f-place">
+    <label for="f-region">Regione</label>
+    <select id="f-region"></select>
+    <label for="f-province">Provincia</label>
+    <select id="f-province"></select>
+    <label for="f-image">URL immagine (.jpg diretto)</label><input id="f-image" type="url" placeholder="https://…/webcam.jpg">
+    <label for="f-page">URL pagina originale</label><input id="f-page" type="url" placeholder="https://…">
+    <label for="f-source">Fonte</label><input id="f-source" placeholder="es. Comune, Orobie Meteo">
+    <p class="hint">Le webcam aggiunte qui restano nel tuo browser. Per averle per tutti, usa “Esporta JSON” e sostituisci <code>webcams.json</code> nel repository.</p>
+    <div class="row">
+      <button type="button" class="btn" id="export">Esporta JSON</button>
+      <button type="button" class="btn" id="cancel">Annulla</button>
+      <button class="btn primary" value="ok">Salva</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+// Province alpine incluse: aggiungine altre qui.
+const AREAS = {
+  "Lombardia": ["Bergamo","Brescia","Como","Lecco","Sondrio","Varese"],
+  "Piemonte": ["Biella","Cuneo","Novara","Torino","Verbano-Cusio-Ossola","Vercelli"],
+  "Valle d'Aosta": ["Aosta"]
+};
+
+const $ = s => document.querySelector(s);
+let base = [], mine = [], filter = {region:null, province:null}, timer = null;
+
+try { mine = JSON.parse(localStorage.getItem("mieWebcam") || "[]"); } catch(e){ mine = []; }
+const all = () => base.concat(mine.map(c => ({...c, _mine:true})));
+const saveMine = () => { try { localStorage.setItem("mieWebcam", JSON.stringify(mine)); } catch(e){} };
+
+fetch("webcams.json").then(r => r.json()).catch(() => []).then(d => { base = d; render(); schedule(); });
+
+function renderNav(){
+  const list = all(), nav = $("#nav");
+  nav.innerHTML = "";
+  const mk = (label, count, r, p, cls) => {
+    const b = document.createElement("button");
+    b.innerHTML = `<span>${label}</span><span class="n">${count}</span>`;
+    b.setAttribute("aria-pressed", filter.region===r && filter.province===p);
+    b.onclick = () => { filter = {region:r, province:p}; render(); };
+    return b;
+  };
+  nav.append(mk("Tutte", list.length, null, null));
+  for (const [reg, provs] of Object.entries(AREAS)){
+    const h = document.createElement("h2"); h.textContent = reg; nav.append(h);
+    provs.forEach(p => nav.append(mk(p, list.filter(c => c.region===reg && c.province===p).length, reg, p)));
+  }
+}
+
+function card(c){
+  const el = document.createElement("article"); el.className = "cam";
+  const shot = document.createElement("div"); shot.className = "shot";
+  if (c.image){
+    const img = new Image(); img.alt = c.name; img.loading = "lazy"; img.dataset.src = c.image;
+    img.src = bust(c.image);
+    img.onerror = () => { img.remove(); shot.insertAdjacentHTML("beforeend",'<div class="fallback">Immagine non incorporabile.<br>Apri la pagina originale.</div>'); };
+    shot.append(img);
+  } else {
+    shot.innerHTML = '<div class="fallback">Nessuna immagine diretta.<br>Apri la pagina originale.</div>';
+  }
+  const meta = document.createElement("div"); meta.className = "meta";
+  const h = document.createElement("h3"); h.textContent = c.name;
+  const p = document.createElement("p"); p.textContent = [c.place, c.province].filter(Boolean).join(", ");
+  meta.append(h, p);
+  if (c.source){ const s = document.createElement("span"); s.className = "badge"; s.textContent = "Fonte: " + c.source; meta.append(s); }
+  const acts = document.createElement("div"); acts.className = "acts";
+  if (c.page){ const a = document.createElement("a"); a.href = c.page; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "Pagina originale"; acts.append(a); }
+  if (c._mine){ const d = document.createElement("button"); d.className = "del"; d.textContent = "Rimuovi"; d.onclick = () => { mine.splice(mine.findIndex(m => m.name===c.name && m.image===c.image),1); saveMine(); render(); }; acts.append(d); }
+  meta.append(acts); el.append(shot, meta);
+  return el;
+}
+
+const bust = u => u + (u.includes("?") ? "&" : "?") + "_=" + Date.now();
+
+function render(){
+  renderNav();
+  const q = $("#q").value.trim().toLowerCase();
+  const list = all().filter(c =>
+    (!filter.region || c.region===filter.region) &&
+    (!filter.province || c.province===filter.province) &&
+    (!q || (c.name+" "+(c.place||"")).toLowerCase().includes(q)));
+  const g = $("#grid"); g.innerHTML = "";
+  list.forEach(c => g.append(card(c)));
+  $("#empty").hidden = list.length > 0;
+}
+
+function refreshImages(){
+  document.querySelectorAll(".shot img").forEach(i => { i.src = bust(i.dataset.src); });
+}
+function schedule(){
+  clearInterval(timer);
+  const s = +$("#refresh").value;
+  if (s) timer = setInterval(refreshImages, s*1000);
+}
+
+$("#q").oninput = render;
+$("#refresh").onchange = schedule;
+$("#reload").onclick = refreshImages;
+
+// Dialogo di inserimento
+const dlg = $("#dlg"), fr = $("#f-region"), fp = $("#f-province");
+fr.innerHTML = Object.keys(AREAS).map(r => `<option>${r}</option>`).join("");
+const fillProv = () => { fp.innerHTML = AREAS[fr.value].map(p => `<option>${p}</option>`).join(""); };
+fr.onchange = fillProv; fillProv();
+$("#add").onclick = () => dlg.showModal();
+$("#cancel").onclick = () => dlg.close();
+$("#form").addEventListener("submit", () => {
+  mine.push({
+    name: $("#f-name").value.trim(), place: $("#f-place").value.trim(),
+    region: fr.value, province: fp.value,
+    image: $("#f-image").value.trim(), page: $("#f-page").value.trim(), source: $("#f-source").value.trim()
+  });
+  saveMine(); $("#form").reset(); fillProv(); render();
+});
+$("#export").onclick = () => {
+  const data = JSON.stringify(all().map(({_mine, ...c}) => c), null, 2);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data], {type:"application/json"}));
+  a.download = "webcams.json"; a.click();
+};
+</script>
+</body>
+</html>
