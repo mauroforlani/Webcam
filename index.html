@@ -54,6 +54,12 @@ label{display:block;font-size:.85rem;font-weight:600;margin:10px 0 3px}
 dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
 .hint{font-size:.8rem;color:var(--muted);margin:4px 0 0}
+nav .lv0,nav .lv1{font-weight:600}
+nav .lv1{margin-top:6px}
+nav .lv2{padding-left:24px}
+.zone{font-size:1.15rem;font-weight:800;letter-spacing:-.01em;margin:28px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline}
+.zone:first-child{margin-top:0}
+.zone span{font-size:.85rem;font-weight:400;color:var(--muted)}
 .shot:fullscreen{aspect-ratio:auto}
 .shot.click{cursor:zoom-in}
 .acts .ed{margin-left:auto}
@@ -71,7 +77,7 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
   <aside>
     <h1>Webcam Alpi</h1>
     <p class="sub">Le mie webcam di montagna</p>
-    <nav id="nav" aria-label="Filtra per provincia"></nav>
+    <nav id="nav" aria-label="Filtra per zona"></nav>
   </aside>
   <main>
     <div class="bar">
@@ -86,7 +92,7 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
       <button class="btn" id="reset" title="Annulla le modifiche locali e torna a webcams.json">Ripristina elenco</button>
       <button class="btn primary" id="add">Aggiungi webcam</button>
     </div>
-    <div class="grid" id="grid"></div>
+    <div id="grid"></div>
     <p class="empty" id="empty" hidden>Nessuna webcam in questa selezione. Usa “Aggiungi webcam” per inserirne una.</p>
   </main>
 </div>
@@ -96,10 +102,14 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
     <h2 id="dlg-title">Aggiungi webcam</h2>
     <label for="f-name">Nome</label><input id="f-name" required>
     <label for="f-place">Località</label><input id="f-place">
-    <label for="f-region">Regione</label>
-    <select id="f-region"></select>
-    <label for="f-province">Provincia</label>
-    <select id="f-province"></select>
+    <label for="f-country">Stato</label>
+    <input id="f-country" list="dl-country" placeholder="Italia" autocomplete="off">
+    <label for="f-region">Regione / cantone</label>
+    <input id="f-region" list="dl-region" required autocomplete="off">
+    <label for="f-province">Provincia / zona (opzionale)</label>
+    <input id="f-province" list="dl-province" autocomplete="off">
+    <p class="hint">Scegli dai suggerimenti oppure scrivi un nome nuovo: il menu a sinistra si crea da solo.</p>
+    <datalist id="dl-country"></datalist><datalist id="dl-region"></datalist><datalist id="dl-province"></datalist>
     <label for="f-image">URL immagine (.jpg diretto)</label><input id="f-image" type="url" placeholder="https://…/webcam.jpg">
     <label for="f-embed">Iframe (opzionale: incolla il codice <code>&lt;iframe…&gt;</code> o solo l'URL)</label><input id="f-embed" placeholder="https://…">
     <p class="hint">Se compilato, al posto dell'immagine viene mostrato l'iframe.</p>
@@ -117,15 +127,20 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
 <div id="lb" role="dialog" aria-label="Immagine a tutto schermo"><img alt=""><span class="cap"></span><button class="x" type="button">Chiudi</button></div>
 
 <script>
-// Province alpine incluse: aggiungine altre qui.
-const AREAS = {
-  "Lombardia": ["Bergamo","Brescia","Como","Lecco","Sondrio","Varese"],
-  "Piemonte": ["Biella","Cuneo","Novara","Torino","Verbano-Cusio-Ossola","Vercelli"],
-  "Valle d'Aosta": ["Aosta"]
-};
+// Suggerimenti per il modulo (puoi scrivere anche zone nuove: il menu si adatta ai dati)
+const SUGGEST = [
+  ["Italia","Lombardia",["Bergamo","Brescia","Como","Lecco","Sondrio","Varese"]],
+  ["Italia","Piemonte",["Biella","Cuneo","Novara","Torino","Verbano-Cusio-Ossola","Vercelli"]],
+  ["Italia","Valle d'Aosta",["Aosta"]],
+  ["Italia","Trentino-Alto Adige",["Bolzano","Trento"]],
+  ["Italia","Veneto",["Belluno"]],
+  ["Italia","Friuli-Venezia Giulia",["Udine","Pordenone"]],
+  ["Svizzera","Vallese",[]], ["Svizzera","Ticino",[]], ["Svizzera","Grigioni",[]],
+  ["Francia","Alta Savoia",[]], ["Austria","Tirolo",[]]
+];
 
 const $ = s => document.querySelector(s);
-let base = [], list = [], filter = {region:null, province:null}, timer = null, editing = null;
+let base = [], list = [], filter = {country:null, region:null, province:null}, timer = null, editing = null;
 let local = {added:[], edits:{}, deleted:[]};   // le tue modifiche, separate da webcams.json
 
 const parseEmbed = v => { const m = v.match(/src\s*=\s*["']([^"']+)["']/i); return (m ? m[1] : v).trim(); };
@@ -167,20 +182,37 @@ async function load(){
   rebuild(); render();
 }
 
+const zone = c => ({country: c.country || "Italia", region: c.region || "", province: c.province || ""});
+const cmp = (x,y) => x.localeCompare(y,"it");
+const cmpCountry = (x,y) => x==="Italia" ? (y==="Italia"?0:-1) : y==="Italia" ? 1 : cmp(x,y);
+const matches = c => { const z = zone(c);
+  return (!filter.country || z.country===filter.country) && (!filter.region || z.region===filter.region) && (!filter.province || z.province===filter.province); };
+
 function renderNav(){
   const nav = $("#nav"); nav.innerHTML = "";
-  const mk = (label, count, r, p) => {
-    const b = document.createElement("button");
-    b.innerHTML = `<span>${label}</span><span class="n">${count}</span>`;
-    b.setAttribute("aria-pressed", filter.region===r && filter.province===p);
-    b.onclick = () => { filter = {region:r, province:p}; render(); };
+  const tree = {};
+  list.forEach(c => { const z = zone(c);
+    const co = tree[z.country] ||= {n:0, regs:{}}; co.n++;
+    const rg = co.regs[z.region] ||= {n:0, provs:{}}; rg.n++;
+    if (z.province) rg.provs[z.province] = (rg.provs[z.province]||0) + 1;
+  });
+  const mk = (label, count, co, r, p, cls) => {
+    const b = document.createElement("button"); b.className = cls;
+    b.innerHTML = `<span></span><span class="n">${count}</span>`; b.firstChild.textContent = label;
+    b.setAttribute("aria-pressed", filter.country===co && filter.region===r && filter.province===p);
+    b.onclick = () => { filter = {country:co, region:r, province:p}; render(); };
     return b;
   };
-  nav.append(mk("Tutte", list.length, null, null));
-  for (const [reg, provs] of Object.entries(AREAS)){
-    const h = document.createElement("h2"); h.textContent = reg; nav.append(h);
-    provs.forEach(p => nav.append(mk(p, list.filter(c => c.region===reg && c.province===p).length, reg, p)));
-  }
+  nav.append(mk("Tutte", list.length, null, null, null, "lv0"));
+  const countries = Object.keys(tree).sort(cmpCountry), multi = countries.length > 1;
+  countries.forEach(co => {
+    if (multi) nav.append(mk(co, tree[co].n, co, null, null, "lv1"));
+    Object.keys(tree[co].regs).sort(cmp).forEach(r => {
+      const rg = tree[co].regs[r];
+      nav.append(mk(r || "Senza regione", rg.n, co, r || null, null, multi ? "lv2" : "lv1"));
+      Object.keys(rg.provs).sort(cmp).forEach(p => nav.append(mk(p, rg.provs[p], co, r || null, p, "lv2")));
+    });
+  });
 }
 
 function card(c){
@@ -208,7 +240,7 @@ function card(c){
   }
   const meta = document.createElement("div"); meta.className = "meta";
   const h = document.createElement("h3"); h.textContent = c.name;
-  const p = document.createElement("p"); p.textContent = [c.place, c.province].filter(Boolean).join(", ");
+  const p = document.createElement("p"); p.textContent = [c.place, c.province, c.region].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(", ");
   meta.append(h, p);
   if (c.source){ const b = document.createElement("span"); b.className = "badge"; b.textContent = "Fonte: " + c.source; meta.append(b); }
   const acts = document.createElement("div"); acts.className = "acts";
@@ -232,14 +264,27 @@ function card(c){
 }
 
 function render(){
+  if ((filter.country||filter.region||filter.province) && !list.some(matches)) filter = {country:null, region:null, province:null};
   renderNav();
   const q = $("#q").value.trim().toLowerCase();
-  const shown = list.filter(c =>
-    (!filter.region || c.region===filter.region) &&
-    (!filter.province || c.province===filter.province) &&
-    (!q || (c.name+" "+(c.place||"")).toLowerCase().includes(q)));
+  const shown = list.filter(c => matches(c) && (!q || (c.name+" "+(c.place||"")).toLowerCase().includes(q)));
+  const multiCountry = new Set(list.map(c => zone(c).country)).size > 1;
+  const groups = {};
+  shown.forEach(c => { const z = zone(c), k = [z.country, z.region, z.province].join("\u0001"); (groups[k] ||= {z, items:[]}).items.push(c); });
+  const ordered = Object.values(groups).sort((a,b) => cmpCountry(a.z.country,b.z.country) || cmp(a.z.region,b.z.region) || cmp(a.z.province,b.z.province));
   const g = $("#grid"); g.innerHTML = "";
-  shown.forEach(c => g.append(card(c)));
+  ordered.forEach(gr => {
+    if (ordered.length > 1){
+      const h = document.createElement("h2"); h.className = "zone";
+      const t = document.createElement("div");
+      t.textContent = [multiCountry ? gr.z.country : "", gr.z.region, gr.z.province].filter(Boolean).join(" · ") || "Altre";
+      const n = document.createElement("span"); n.textContent = gr.items.length;
+      h.append(t, n); g.append(h);
+    }
+    const grid = document.createElement("div"); grid.className = "grid";
+    gr.items.forEach(c => grid.append(card(c)));
+    g.append(grid);
+  });
   $("#empty").hidden = shown.length > 0;
 }
 
@@ -263,17 +308,24 @@ document.addEventListener("keydown", e => { if (e.key==="Escape" && lb.classList
 document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && lb.classList.contains("on")) closeLightbox(); });
 
 // Form aggiungi / modifica
-const dlg = $("#dlg"), fr = $("#f-region"), fp = $("#f-province");
-fr.innerHTML = Object.keys(AREAS).map(r => `<option>${r}</option>`).join("");
-const fillProv = (sel) => { fp.innerHTML = AREAS[fr.value].map(p => `<option>${p}</option>`).join(""); if (sel) fp.value = sel; };
-fr.onchange = () => fillProv();
+const dlg = $("#dlg"), fc = $("#f-country"), fr = $("#f-region"), fp = $("#f-province");
+const opts = arr => [...new Set(arr.filter(Boolean))].sort(cmp).map(v => { const o = document.createElement("option"); o.value = v; return o; });
+function suggestions(){
+  const known = [...SUGGEST.map(([co,r,ps]) => ({country:co, region:r, provs:ps})), ...list.map(c => { const z = zone(c); return {country:z.country, region:z.region, provs:[z.province]}; })];
+  const co = fc.value.trim() || "Italia", r = fr.value.trim();
+  $("#dl-country").replaceChildren(...opts(known.map(k => k.country)));
+  $("#dl-region").replaceChildren(...opts(known.filter(k => k.country===co).map(k => k.region)));
+  $("#dl-province").replaceChildren(...opts(known.filter(k => k.country===co && (!r || k.region===r)).flatMap(k => k.provs)));
+}
+[fc, fr].forEach(el => el.addEventListener("input", suggestions));
 
 function openForm(c){
   editing = c || null;
   $("#dlg-title").textContent = c ? "Modifica webcam" : "Aggiungi webcam";
   $("#f-name").value = c?.name || ""; $("#f-place").value = c?.place || "";
-  fr.value = c?.region && AREAS[c.region] ? c.region : (filter.region || Object.keys(AREAS)[0]);
-  fillProv(c?.province || filter.province);
+  fc.value = c ? zone(c).country : (filter.country || "Italia");
+  fr.value = c?.region || filter.region || ""; fp.value = c?.province || filter.province || "";
+  suggestions();
   $("#f-image").value = c?.image || ""; $("#f-embed").value = c?.embed || ""; $("#f-page").value = c?.page || ""; $("#f-source").value = c?.source || "";
   dlg.showModal();
 }
@@ -282,7 +334,7 @@ $("#cancel").onclick = () => dlg.close();
 $("#form").addEventListener("submit", () => {
   const data = {
     name: $("#f-name").value.trim(), place: $("#f-place").value.trim(),
-    region: fr.value, province: fp.value,
+    country: fc.value.trim() || "Italia", region: fr.value.trim(), province: fp.value.trim(),
     image: $("#f-image").value.trim(), embed: parseEmbed($("#f-embed").value), page: $("#f-page").value.trim(), source: $("#f-source").value.trim()
   };
   if (!editing) local.added.push(data);
