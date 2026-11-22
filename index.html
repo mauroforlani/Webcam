@@ -54,6 +54,14 @@ label{display:block;font-size:.85rem;font-weight:600;margin:10px 0 3px}
 dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
 .hint{font-size:.8rem;color:var(--muted);margin:4px 0 0}
+.shot.click{cursor:zoom-in}
+.acts .ed{margin-left:auto}
+.acts .del{margin-left:0}
+#lb{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;cursor:zoom-out}
+#lb.on{display:flex}
+#lb img{max-width:100vw;max-height:100vh;object-fit:contain}
+#lb .cap{position:absolute;left:16px;bottom:14px;color:#fff;font-size:.9rem;text-shadow:0 1px 3px #000}
+#lb .x{position:absolute;top:12px;right:14px;color:#fff;background:rgba(255,255,255,.15);border:0;border-radius:8px;font:inherit;padding:6px 12px;cursor:pointer}
 @media(max-width:760px){.app{grid-template-columns:1fr}aside{position:static;height:auto;border:0;border-bottom:1px solid var(--line)}}
 </style>
 </head>
@@ -74,6 +82,7 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
         <option value="600">Ogni 10 minuti</option>
       </select>
       <button class="btn" id="reload">Aggiorna ora</button>
+      <button class="btn" id="reset" title="Torna all'elenco di webcams.json">Ripristina elenco</button>
       <button class="btn primary" id="add">Aggiungi webcam</button>
     </div>
     <div class="grid" id="grid"></div>
@@ -83,7 +92,7 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
 
 <dialog id="dlg">
   <form method="dialog" id="form">
-    <h2>Aggiungi webcam</h2>
+    <h2 id="dlg-title">Aggiungi webcam</h2>
     <label for="f-name">Nome</label><input id="f-name" required>
     <label for="f-place">Località</label><input id="f-place">
     <label for="f-region">Regione</label>
@@ -93,7 +102,7 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
     <label for="f-image">URL immagine (.jpg diretto)</label><input id="f-image" type="url" placeholder="https://…/webcam.jpg">
     <label for="f-page">URL pagina originale</label><input id="f-page" type="url" placeholder="https://…">
     <label for="f-source">Fonte</label><input id="f-source" placeholder="es. Comune, Orobie Meteo">
-    <p class="hint">Le webcam aggiunte qui restano nel tuo browser. Per averle per tutti, usa “Esporta JSON” e sostituisci <code>webcams.json</code> nel repository.</p>
+    <p class="hint">Le modifiche restano nel tuo browser. Per renderle permanenti e visibili a tutti, usa “Esporta JSON” e sostituisci <code>webcams.json</code> nel repository.</p>
     <div class="row">
       <button type="button" class="btn" id="export">Esporta JSON</button>
       <button type="button" class="btn" id="cancel">Annulla</button>
@@ -101,6 +110,8 @@ dialog input,dialog select{width:100%;font:inherit;padding:8px 10px;border:1px s
     </div>
   </form>
 </dialog>
+
+<div id="lb" role="dialog" aria-label="Immagine a tutto schermo"><img alt=""><span class="cap"></span><button class="x" type="button">Chiudi</button></div>
 
 <script>
 // Province alpine incluse: aggiungine altre qui.
@@ -111,18 +122,26 @@ const AREAS = {
 };
 
 const $ = s => document.querySelector(s);
-let base = [], mine = [], filter = {region:null, province:null}, timer = null;
+const KEY = "webcamList";
+let list = [], filter = {region:null, province:null}, timer = null, editing = null;
 
-try { mine = JSON.parse(localStorage.getItem("mieWebcam") || "[]"); } catch(e){ mine = []; }
-const all = () => base.concat(mine.map(c => ({...c, _mine:true})));
-const saveMine = () => { try { localStorage.setItem("mieWebcam", JSON.stringify(mine)); } catch(e){} };
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch(e){} };
+const bust = u => u + (u.includes("?") ? "&" : "?") + "_=" + Date.now();
 
-fetch("webcams.json").then(r => r.json()).catch(() => []).then(d => { base = d; render(); schedule(); });
+async function load(forceBase){
+  let stored = null;
+  if (!forceBase){ try { stored = JSON.parse(localStorage.getItem(KEY)); } catch(e){} }
+  if (Array.isArray(stored)) list = stored;
+  else {
+    list = await fetch("webcams.json").then(r => r.json()).catch(() => []);
+    try { localStorage.removeItem(KEY); } catch(e){}
+  }
+  render();
+}
 
 function renderNav(){
-  const list = all(), nav = $("#nav");
-  nav.innerHTML = "";
-  const mk = (label, count, r, p, cls) => {
+  const nav = $("#nav"); nav.innerHTML = "";
+  const mk = (label, count, r, p) => {
     const b = document.createElement("button");
     b.innerHTML = `<span>${label}</span><span class="n">${count}</span>`;
     b.setAttribute("aria-pressed", filter.region===r && filter.province===p);
@@ -140,10 +159,17 @@ function card(c){
   const el = document.createElement("article"); el.className = "cam";
   const shot = document.createElement("div"); shot.className = "shot";
   if (c.image){
-    const img = new Image(); img.alt = c.name; img.loading = "lazy"; img.dataset.src = c.image;
-    img.src = bust(c.image);
-    img.onerror = () => { img.remove(); shot.insertAdjacentHTML("beforeend",'<div class="fallback">Immagine non incorporabile.<br>Apri la pagina originale.</div>'); };
+    shot.classList.add("click"); shot.tabIndex = 0; shot.setAttribute("role","button");
+    shot.setAttribute("aria-label","Apri a tutto schermo: " + c.name);
+    const img = new Image(); img.alt = c.name; img.loading = "lazy"; img.dataset.src = c.image; img.src = bust(c.image);
+    img.onerror = () => {
+      img.remove(); shot.classList.remove("click"); shot.onclick = null;
+      shot.insertAdjacentHTML("beforeend",'<div class="fallback">Immagine non incorporabile.<br>Apri la pagina originale.</div>');
+    };
     shot.append(img);
+    const open = () => openLightbox(c);
+    shot.onclick = open;
+    shot.onkeydown = e => { if (e.key==="Enter" || e.key===" "){ e.preventDefault(); open(); } };
   } else {
     shot.innerHTML = '<div class="fallback">Nessuna immagine diretta.<br>Apri la pagina originale.</div>';
   }
@@ -151,62 +177,85 @@ function card(c){
   const h = document.createElement("h3"); h.textContent = c.name;
   const p = document.createElement("p"); p.textContent = [c.place, c.province].filter(Boolean).join(", ");
   meta.append(h, p);
-  if (c.source){ const s = document.createElement("span"); s.className = "badge"; s.textContent = "Fonte: " + c.source; meta.append(s); }
+  if (c.source){ const b = document.createElement("span"); b.className = "badge"; b.textContent = "Fonte: " + c.source; meta.append(b); }
   const acts = document.createElement("div"); acts.className = "acts";
   if (c.page){ const a = document.createElement("a"); a.href = c.page; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "Pagina originale"; acts.append(a); }
-  if (c._mine){ const d = document.createElement("button"); d.className = "del"; d.textContent = "Rimuovi"; d.onclick = () => { mine.splice(mine.findIndex(m => m.name===c.name && m.image===c.image),1); saveMine(); render(); }; acts.append(d); }
+  const ed = document.createElement("button"); ed.className = "ed"; ed.textContent = "Modifica"; ed.onclick = () => openForm(c);
+  const del = document.createElement("button"); del.className = "del"; del.textContent = "Elimina";
+  del.onclick = () => { if (confirm("Eliminare «" + c.name + "»?")){ list.splice(list.indexOf(c),1); save(); render(); } };
+  acts.append(ed, del);
   meta.append(acts); el.append(shot, meta);
   return el;
 }
 
-const bust = u => u + (u.includes("?") ? "&" : "?") + "_=" + Date.now();
-
 function render(){
   renderNav();
   const q = $("#q").value.trim().toLowerCase();
-  const list = all().filter(c =>
+  const shown = list.filter(c =>
     (!filter.region || c.region===filter.region) &&
     (!filter.province || c.province===filter.province) &&
     (!q || (c.name+" "+(c.place||"")).toLowerCase().includes(q)));
   const g = $("#grid"); g.innerHTML = "";
-  list.forEach(c => g.append(card(c)));
-  $("#empty").hidden = list.length > 0;
+  shown.forEach(c => g.append(card(c)));
+  $("#empty").hidden = shown.length > 0;
 }
 
-function refreshImages(){
-  document.querySelectorAll(".shot img").forEach(i => { i.src = bust(i.dataset.src); });
+function refreshImages(){ document.querySelectorAll(".shot img").forEach(i => { i.src = bust(i.dataset.src); }); }
+function schedule(){ clearInterval(timer); const s = +$("#refresh").value; if (s) timer = setInterval(refreshImages, s*1000); }
+
+// Tutto schermo
+const lb = $("#lb"), lbImg = lb.querySelector("img");
+function openLightbox(c){
+  lbImg.src = bust(c.image); lbImg.alt = c.name;
+  lb.querySelector(".cap").textContent = c.name + (c.place ? " – " + c.place : "");
+  lb.classList.add("on");
+  if (lb.requestFullscreen) lb.requestFullscreen().catch(() => {});
 }
-function schedule(){
-  clearInterval(timer);
-  const s = +$("#refresh").value;
-  if (s) timer = setInterval(refreshImages, s*1000);
+function closeLightbox(){
+  lb.classList.remove("on"); lbImg.removeAttribute("src");
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 }
+lb.onclick = closeLightbox;
+document.addEventListener("keydown", e => { if (e.key==="Escape" && lb.classList.contains("on")) closeLightbox(); });
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && lb.classList.contains("on")) closeLightbox(); });
+
+// Form aggiungi / modifica
+const dlg = $("#dlg"), fr = $("#f-region"), fp = $("#f-province");
+fr.innerHTML = Object.keys(AREAS).map(r => `<option>${r}</option>`).join("");
+const fillProv = (sel) => { fp.innerHTML = AREAS[fr.value].map(p => `<option>${p}</option>`).join(""); if (sel) fp.value = sel; };
+fr.onchange = () => fillProv();
+
+function openForm(c){
+  editing = c || null;
+  $("#dlg-title").textContent = c ? "Modifica webcam" : "Aggiungi webcam";
+  $("#f-name").value = c?.name || ""; $("#f-place").value = c?.place || "";
+  fr.value = c?.region && AREAS[c.region] ? c.region : (filter.region || Object.keys(AREAS)[0]);
+  fillProv(c?.province || filter.province);
+  $("#f-image").value = c?.image || ""; $("#f-page").value = c?.page || ""; $("#f-source").value = c?.source || "";
+  dlg.showModal();
+}
+$("#add").onclick = () => openForm(null);
+$("#cancel").onclick = () => dlg.close();
+$("#form").addEventListener("submit", () => {
+  const data = {
+    name: $("#f-name").value.trim(), place: $("#f-place").value.trim(),
+    region: fr.value, province: fp.value,
+    image: $("#f-image").value.trim(), page: $("#f-page").value.trim(), source: $("#f-source").value.trim()
+  };
+  if (editing) Object.assign(editing, data); else list.push(data);
+  editing = null; save(); render();
+});
+$("#export").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(list, null, 2)], {type:"application/json"}));
+  a.download = "webcams.json"; a.click();
+};
+$("#reset").onclick = () => { if (confirm("Scartare le modifiche fatte in questo browser e ricaricare l'elenco da webcams.json?")) load(true); };
 
 $("#q").oninput = render;
 $("#refresh").onchange = schedule;
 $("#reload").onclick = refreshImages;
-
-// Dialogo di inserimento
-const dlg = $("#dlg"), fr = $("#f-region"), fp = $("#f-province");
-fr.innerHTML = Object.keys(AREAS).map(r => `<option>${r}</option>`).join("");
-const fillProv = () => { fp.innerHTML = AREAS[fr.value].map(p => `<option>${p}</option>`).join(""); };
-fr.onchange = fillProv; fillProv();
-$("#add").onclick = () => dlg.showModal();
-$("#cancel").onclick = () => dlg.close();
-$("#form").addEventListener("submit", () => {
-  mine.push({
-    name: $("#f-name").value.trim(), place: $("#f-place").value.trim(),
-    region: fr.value, province: fp.value,
-    image: $("#f-image").value.trim(), page: $("#f-page").value.trim(), source: $("#f-source").value.trim()
-  });
-  saveMine(); $("#form").reset(); fillProv(); render();
-});
-$("#export").onclick = () => {
-  const data = JSON.stringify(all().map(({_mine, ...c}) => c), null, 2);
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([data], {type:"application/json"}));
-  a.download = "webcams.json"; a.click();
-};
+load(false).then(schedule);
 </script>
 </body>
 </html>
