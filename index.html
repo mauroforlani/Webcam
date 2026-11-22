@@ -93,9 +93,11 @@ nav .lv2{padding-left:24px}
         <option value="600">Ogni 10 minuti</option>
       </select>
       <button class="btn" id="reload">Aggiorna ora</button>
+      <button class="btn" id="gh-open">GitHub</button>
       <button class="btn" id="reset" title="Annulla le modifiche locali e torna a webcams.json">Ripristina elenco</button>
       <button class="btn primary" id="add">Aggiungi webcam</button>
     </div>
+    <p class="badge" id="ghstatus" role="status"></p>
     <div id="grid"></div>
     <p class="empty" id="empty" hidden>Nessuna webcam in questa selezione. Usa “Aggiungi webcam” per inserirne una.</p>
   </main>
@@ -128,6 +130,23 @@ nav .lv2{padding-left:24px}
   </form>
 </dialog>
 
+<dialog id="gh">
+  <h2>Salvataggio su GitHub</h2>
+  <label for="g-owner">Utente GitHub</label><input id="g-owner" autocomplete="off">
+  <label for="g-repo">Repository</label><input id="g-repo" autocomplete="off">
+  <label for="g-branch">Branch</label><input id="g-branch" placeholder="main" autocomplete="off">
+  <label for="g-path">File</label><input id="g-path" placeholder="webcams.json" autocomplete="off">
+  <label for="g-token">Token di accesso (fine-grained)</label><input id="g-token" type="password" autocomplete="off">
+  <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:14px"><input type="checkbox" id="g-auto" style="width:auto"> Salva automaticamente a ogni modifica</label>
+  <p class="hint">Il token resta solo in questo browser, mai nel repository. Crealo su GitHub → Settings → Developer settings → Fine-grained tokens, limitato a questo repository con permesso <b>Contents: Read and write</b>. Non usarlo su dispositivi condivisi.</p>
+  <p class="hint" id="gh-msg" role="status"></p>
+  <div class="row">
+    <button type="button" class="btn" id="g-close">Chiudi</button>
+    <button type="button" class="btn" id="g-save">Salva impostazioni</button>
+    <button type="button" class="btn primary" id="g-push">Salva e invia ora</button>
+  </div>
+</dialog>
+
 <div id="lb" role="dialog" aria-label="Immagine a tutto schermo"><img alt=""><span class="cap"></span><button class="x" type="button">Chiudi</button></div>
 
 <script>
@@ -151,13 +170,27 @@ const parseEmbed = v => { const m = v.match(/src\s*=\s*["']([^"']+)["']/i); retu
 const keyOf = c => c.id || (c.name + "|" + (c.image || c.embed || c.page || ""));
 const bust = u => u + (u.includes("?") ? "&" : "?") + "_=" + Date.now();
 const read = k => { try { return JSON.parse(localStorage.getItem(k)); } catch(e){ return null; } };
-const save = () => { try { localStorage.setItem("webcamLocal", JSON.stringify(local)); } catch(e){} };
+const persist = () => { try { localStorage.setItem("webcamLocal", JSON.stringify(local)); } catch(e){} };
+const save = () => { persist(); autoSync(); };
 const clean = c => { const o = {...c}; delete o._src; delete o._key; delete o._ref; return o; };
 
-function rebuild(){
-  list = base.filter(b => !local.deleted.includes(keyOf(b)))
-    .map(b => ({...(local.edits[keyOf(b)] || b), _src:"base", _key:keyOf(b)}))
+function compute(b){
+  return b.filter(x => !local.deleted.includes(keyOf(x)))
+    .map(x => ({...(local.edits[keyOf(x)] || x), _src:"base", _key:keyOf(x)}))
     .concat(local.added.map(a => ({...a, _src:"added", _ref:a})));
+}
+function rebuild(){ list = compute(base); }
+
+// Quando webcams.json sul sito contiene già le modifiche, le togliamo dalla memoria locale
+function reconcile(){
+  const bk = base.map(keyOf); let ch = false;
+  local.added = local.added.filter(a => { const hit = bk.includes(keyOf(a)); if (hit) ch = true; return !hit; });
+  Object.keys(local.edits).forEach(k => {
+    const b = base.find(x => keyOf(x)===k);
+    if (!b || JSON.stringify(clean(local.edits[k]))===JSON.stringify(b)){ delete local.edits[k]; ch = true; }
+  });
+  local.deleted = local.deleted.filter(k => { const keep = bk.includes(k); if (!keep) ch = true; return keep; });
+  if (ch) persist();
 }
 
 // Recupera i dati salvati dalle versioni precedenti (le vecchie chiavi non vengono mai cancellate)
@@ -175,15 +208,15 @@ function migrate(){
     });
     baseKeys.forEach(k => { if (!old2.some(c => keyOf(c)===k)) local.deleted.push(k); });
   }
-  save();
+  persist();
 }
 
 async function load(){
-  base = await fetch("webcams.json").then(r => r.json()).catch(() => []);
+  base = await fetch("webcams.json?_=" + Date.now(), {cache:"no-store"}).then(r => r.json()).catch(() => []);
   const saved = read("webcamLocal");
   if (saved && Array.isArray(saved.added)) local = {added:saved.added, edits:saved.edits||{}, deleted:saved.deleted||[]};
   else migrate();
-  rebuild(); render();
+  reconcile(); rebuild(); render();
 }
 
 const zone = c => ({country: c.country || "Italia", region: c.region || "", province: c.province || ""});
@@ -355,6 +388,66 @@ $("#reset").onclick = () => {
   if (!confirm("Annullare TUTTE le modifiche fatte in questo browser (webcam aggiunte, modificate o eliminate)? Se vuoi tenerle, esporta prima il JSON.")) return;
   local = {added:[], edits:{}, deleted:[]}; save(); rebuild(); render();
 };
+
+// ---------- Sincronizzazione con GitHub ----------
+const ghGet = () => ({branch:"main", path:"webcams.json", ...(read("ghSettings") || {})});
+const toB64 = str => { const by = new TextEncoder().encode(str); let bin = ""; for (let i=0;i<by.length;i+=0x8000) bin += String.fromCharCode.apply(null, by.subarray(i,i+0x8000)); return btoa(bin); };
+const fromB64 = b => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g,"")), c => c.charCodeAt(0)));
+function setStatus(t, err){
+  [$("#ghstatus"), $("#gh-msg")].forEach(el => { el.textContent = t; el.style.color = err ? "var(--warn)" : ""; });
+}
+async function httpErr(r){
+  let m = ""; try { m = (await r.json()).message; } catch(e){}
+  const hints = {401:"Token non valido o scaduto", 403:"Token senza permessi (serve Contents: Read and write)", 404:"Repository non trovato: controlla utente, repository e token"};
+  return new Error((hints[r.status] || "Errore GitHub " + r.status) + (m ? " – " + m : ""));
+}
+let syncT = null, syncing = false;
+function autoSync(){ const g = ghGet(); if (!g.auto || !g.token) return; clearTimeout(syncT); syncT = setTimeout(pushToGitHub, 1500); }
+async function pushToGitHub(){
+  const g = ghGet();
+  if (!g.token || !g.owner || !g.repo){ setStatus("Configura prima GitHub (pulsante GitHub).", true); return false; }
+  if (syncing) return false;
+  syncing = true; setStatus("Salvataggio su GitHub…");
+  try {
+    const url = `https://api.github.com/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.repo)}/contents/${g.path}`;
+    const H = {Authorization:"Bearer " + g.token, Accept:"application/vnd.github+json", "X-GitHub-Api-Version":"2022-11-28"};
+    for (let i = 0; i < 2; i++){
+      const r = await fetch(url + "?ref=" + encodeURIComponent(g.branch), {headers:H, cache:"no-store"});
+      let sha, remote = [];
+      if (r.ok){
+        const j = await r.json(); sha = j.sha;
+        try { remote = JSON.parse(fromB64(j.content)); } catch(e){ throw new Error("Il file sul repository non è un JSON valido"); }
+      } else if (r.status !== 404) throw await httpErr(r);
+      const body = JSON.stringify(compute(remote).map(clean), null, 2) + "\n";
+      const p = await fetch(url, {method:"PUT", headers:{...H, "Content-Type":"application/json"},
+        body: JSON.stringify({message:"Aggiorna webcam dal sito", content:toB64(body), branch:g.branch, ...(sha ? {sha} : {})})});
+      if (p.ok){ setStatus("Salvato su GitHub ✓ – il sito si aggiorna in circa un minuto."); return true; }
+      if (p.status !== 409 && p.status !== 422) throw await httpErr(p);
+    }
+    throw new Error("Conflitto durante il salvataggio, riprova.");
+  } catch(e){ setStatus("GitHub: " + e.message, true); return false; }
+  finally { syncing = false; }
+}
+const ghDlg = $("#gh");
+function ghSave(){
+  const old = ghGet();
+  const g = {owner:$("#g-owner").value.trim(), repo:$("#g-repo").value.trim(), branch:$("#g-branch").value.trim() || "main",
+             path:$("#g-path").value.trim() || "webcams.json", token:$("#g-token").value.trim() || old.token || "", auto:$("#g-auto").checked};
+  try { localStorage.setItem("ghSettings", JSON.stringify(g)); } catch(e){}
+  return g;
+}
+$("#gh-open").onclick = () => {
+  const g = ghGet(), host = location.hostname.endsWith(".github.io");
+  $("#g-owner").value = g.owner || (host ? location.hostname.split(".")[0] : "");
+  $("#g-repo").value = g.repo || (host ? location.pathname.split("/")[1] || "" : "");
+  $("#g-branch").value = g.branch; $("#g-path").value = g.path;
+  $("#g-token").value = ""; $("#g-token").placeholder = g.token ? "•••• già salvato (lascia vuoto per mantenerlo)" : "github_pat_…";
+  $("#g-auto").checked = !!g.auto; $("#gh-msg").textContent = "";
+  ghDlg.showModal();
+};
+$("#g-close").onclick = () => ghDlg.close();
+$("#g-save").onclick = () => { ghSave(); setStatus("Impostazioni salvate in questo browser."); };
+$("#g-push").onclick = async () => { ghSave(); await pushToGitHub(); };
 
 $("#q").oninput = render;
 $("#refresh").onchange = schedule;
