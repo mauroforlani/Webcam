@@ -66,5 +66,27 @@
     "embed": "https://pontedilegnotonale.panomax.com/passodeltonale",
     "page": "",
     "source": ""
+  },
+  {
+    "name": "Passo del Tonale",
+    "place": "Ponte di Legno",
+    "country": "Italia",
+    "region": "Lombardia",
+    "province": "Brescia",
+    "image": "",
+    "embed": "https://pontedilegnotonale.panomax.com/passodeltonale",
+    "page": "",
+    "source": ""
+  },
+  {
+    "name": "Montespluga",
+    "place": "Montespluga",
+    "country": "Italia",
+    "region": "Lombardia",
+    "province": "Sondrio",
+    "image": "",
+    "embed": "https://montespluga.panomax.com/",
+    "page": "",
+    "source": ""
   }
 ]
